@@ -102,7 +102,7 @@ capability check: an injected perturbation must move the output (otherwise a
 @article{iplf2026,
   title  = {Initiator-Pays Link Formation: Recovering Device-to-Device
             Connectivity after Infrastructure Failure},
-  author = {<authors>},
+  author = {Shichen Yao and Gongzhe Qiao},
   journal= {Computer Networks},
   year   = {2026},
   note   = {Under review}
@@ -115,4 +115,5 @@ MIT. See `LICENSE`.
 
 ## Contact
 
-<corresponding author and email>
+Shichen Yao, 202483290192@nuist.edu.cn
+Gongzhe Qiao (corresponding author), 003969@nuist.edu.cn
