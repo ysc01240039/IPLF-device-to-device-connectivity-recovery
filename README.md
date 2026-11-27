@@ -73,9 +73,14 @@ desktop core.
 
 ```bash
 python _verify_engine.py    # 12 seeds, bit-identical trajectories
-python _verify_exp.py       # every number in the paper vs raw JSON
 python metric_selftest.py   # each metric responds to its inputs
+cd data && python ../_verify_exp.py   # every number in the paper vs raw JSON
 ```
+
+`_verify_exp.py` reads the raw JSON from the current working directory, so run it
+from `data/` (where the `exp_v245_*.json` files live); from the repository root it
+will report the files as missing. It prints one line per reported number and ends
+with `结论：全部对上` when the manuscript matches the data.
 
 `_verify_engine.py` prints `W1 bit-identical: 12/12 seeds` together with a
 capability check: an injected perturbation must move the output (otherwise a
