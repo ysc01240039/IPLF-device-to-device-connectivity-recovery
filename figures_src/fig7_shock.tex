@@ -1,0 +1,51 @@
+% fig7_shock.tex —— 图 7（二次打击后的末态最大连通分量）源文件。
+%   pdflatex fig7_shock.tex
+% 数据：../data/robustlcc_wide.csv
+\documentclass[border=4pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\pgfplotstableset{col sep=comma}
+
+\definecolor{cOurs}{RGB}{196,30,58}
+\definecolor{cLower}{RGB}{160,160,160}
+\definecolor{cLeach}{RGB}{31,119,180}
+\definecolor{cCfachs}{RGB}{255,127,14}
+\definecolor{cAfpuck}{RGB}{44,160,44}
+
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+  width=8.4cm, height=4.4cm,
+  ybar, bar width=5.5pt,
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+  ylabel={largest component (\%)},
+  xlabel={fraction of uplink terminals destroyed},
+  symbolic x coords={0.0,0.1,0.2},
+  xticklabels={0,10,20},
+  xtick=data,
+  ymin=0, ymax=60,
+  ytick={0,20,40,60},
+  enlarge x limits=0.22,
+  grid=major, grid style={gray!18},
+  ymajorgrids=true, xmajorgrids=false,
+  legend style={font=\scriptsize, draw=none, fill=none, at={(0.5,-0.30)},
+                anchor=north, legend columns=4, column sep=1.2ex},
+  legend image code/.code={\draw[#1, draw=none] (0cm,-0.1cm) rectangle (0.25cm,0.13cm);},
+]
+\addplot[bar shift=-8.25pt,fill=cOurs, draw=cOurs!70!black]
+  table[x=hitp, y expr=\thisrow{ours}*100] {../data/robustlcc_wide.csv};
+\addlegendentry{IPLF}
+\addplot[bar shift=-2.75pt,fill=cLeach, draw=cLeach!70!black]
+  table[x=hitp, y expr=\thisrow{leach}*100] {../data/robustlcc_wide.csv};
+\addlegendentry{LEACH}
+\addplot[bar shift=2.75pt,fill=cAfpuck, draw=cAfpuck!70!black]
+  table[x=hitp, y expr=\thisrow{afpuck}*100] {../data/robustlcc_wide.csv};
+\addlegendentry{AFPUC-$k$}
+\addplot[bar shift=8.25pt,fill=cLower, draw=cLower!70!black]
+  table[x=hitp, y expr=\thisrow{lower}*100] {../data/robustlcc_wide.csv};
+\addlegendentry{Lower bound}
+\end{axis}
+\end{tikzpicture}
+\end{document}

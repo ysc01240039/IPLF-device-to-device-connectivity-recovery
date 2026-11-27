@@ -67,6 +67,8 @@ def base_world(eng, n=10, dis_r=3):
     eng.TOTAL = 278
     eng.Q_MAX = 20.0
     eng.QUERY_PERIOD = 0
+    # 2026-11-27：灾前锁定中性配置，各臂只在灾后不同（gset0 逐位相同，配对才成立）
+    eng.FREEZE_PRE = 1
 
 
 # ---------------- 臂 ----------------
@@ -476,8 +478,9 @@ def grp_fit():
 # 各方法的最优档并不是 0.05 或 0.50 —— LEACH 与 CFACHS 的峰在 0.70，AFPUC-k 在 0.50，
 # AFPUC-loc 在 0.10，AER-DM 全档相同。按"两档取优"等于把对手调低了（LEACH 0.452 vs 实际 0.490）。
 # 现改为**网格最优档**（baseline at its best）。
-LIT_BEST = [(0, "LEACH", 0.70), (1, "CFACHS", 0.70), (2, "AFPUC-k", 0.50),
-            (3, "AER-DM", 0.05), (4, "AFPUC-loc", 0.10)]
+LIT_BEST = [(0, "LEACH", 0.10), (1, "CFACHS", 0.05), (2, "AFPUC-k", 0.05),
+            (3, "AER-DM", 0.02), (4, "AFPUC-loc", 0.10)]
+# 2026-11-27：灾前锁定后重扫的网格最优（曲线已变平，见 §V-A；差值多在噪声内）
 
 MULTI_DIMS = {
     "sev": ("DIS_R", [2, 3, 4]),

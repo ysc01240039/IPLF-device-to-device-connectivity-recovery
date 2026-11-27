@@ -393,7 +393,23 @@ SEEK_HOPS = 0
 # >0 时：候选价值 = 成本 − MERGE_VAL × 目标所在块的规模（台）。0＝旧行为。
 MERGE_VAL = 0.0
 # `ONE_SIDE`（2026-11-19）：0＝两端各付（旧）；1＝**只由伸出的那端付**（画面“一个球伸出一条链”）。
+# 2026-11-26 扩展（0/1 的行为逐位不变，只为回答“同一条链扣掉的信用总额是否相同”）：
+#   2＝**IPLF-全额**：伸的那端付 ci+cj（整条链），收的端不付 —— 总额与双边相同；
+#   3＝**双边-对半**：两端各付 ci/2 —— 总额与 ONE_SIDE=1 相同。
+#   ⇒ {0,2} 是“总额=ci+cj”这一列，{1,3} 是“总额=ci”这一列；列内只差“由谁付”。
 ONE_SIDE = 0
+# `FREEZE_PRE`（2026-11-27 审计）：1＝灾前（step < pre_steps）锁定中性配置（双边、无选头、无借料/委托/多手），
+# 到 `pre_steps` 那一步再切回本臂的规则。这样各臂的灾前世界与 gset0 逐位相同，配对与分母才成立。
+FREEZE_PRE = 0
+# `STK_PAID`（2026-11-26 审计）：建链时栈里记的是**标价** (ci,cj) 还是**实际付款**。
+# 0＝旧行为（记标价；ONE_SIDE=1 时收款端没付钱、断链却照样退它一半 ⇒ 凭空生料）；
+# 1＝只记实际付款，退款与收费对得上。**2026-11-26 起默认 1**（审计结论：旧默认是记账错误）。
+STK_PAID = 1
+# 诊断（2026-11-26）：建链门槛被两边余额分别挡掉的次数；`j` 只记“i 够付、j 不够付”的条数。
+_GATE = {"i": 0, "j": 0}
+# 诊断（2026-11-26）：**实际被扣掉的**建链信用总额与建链条数（`m_build` 记的是标价 ci+cj，
+# 与“实际扣了多少”不是一回事，回答“两种规则扣的总额是否相同”必须看这一个）。
+_PAID = {"amt": 0.0, "n": 0}
 # `SKY_WIN`（2026-11-20，多星过境窗口）：入口按 id 分组，每组只在自己那段时间里可用。
 # 0＝关（一个“天”始终在）；>0＝组数。`SKY_WIN_T`＝每组可见多少步。
 # `SAT_PASS`（2026-11-20 修正）：**“天”＝卫星**，不是“入口分组”。
@@ -2122,6 +2138,25 @@ def run_one(job):
     try_all = 0                # 所有连地尝试次数（与 far_link 同一总体）
     pre_steps = int(round(pre_h * 3600.0 / dt))
 
+    # 2026-11-27：灾前锁定中性配置（见 FREEZE_PRE）。本臂的规则值先存下来，第 pre_steps 步再写回。
+    _arm_save = None
+    if FREEZE_PRE:
+        _arm_save = {_k: globals()[_k] for _k in
+                     ("ONE_SIDE", "MAT_FLOW", "CARRY", "LEACH", "CH_MODE", "CH_P",
+                      "MULTI_ARM_SRC", "DORM_ON")}
+        _arm_save["k_arms"] = k_arms
+        _arm_save["explore"] = explore
+        globals()["ONE_SIDE"] = 0
+        globals()["MAT_FLOW"] = 0
+        globals()["CARRY"] = 0
+        globals()["LEACH"] = 0
+        globals()["CH_MODE"] = 0
+        globals()["CH_P"] = 0.5
+        globals()["MULTI_ARM_SRC"] = 0
+        globals()["DORM_ON"] = 0
+        k_arms = 1
+        explore = 0.5
+
     R_b, R_w, cov_s, upb_s, upn_s, deg_s = [], [], [], [], [], []
     mat0 = sum(mat)
     # 最后一个检查点必须落在仿真范围内：(STEPS-1)*DT = 604500 s。
@@ -2184,6 +2219,15 @@ def run_one(job):
     _LEAD_STEP = -1
     up = []          # 上一步的入口集合（GEO_SEEK 在步首用它，允许一步滞后）
     for step in range(total):
+        if _arm_save is not None and step == pre_steps:
+            for _k_s, _v_s in _arm_save.items():
+                if _k_s == "k_arms":
+                    k_arms = _v_s
+                elif _k_s == "explore":
+                    explore = _v_s
+                else:
+                    globals()[_k_s] = _v_s
+            _arm_save = None
         t = step * dt
         ew_series.append(len(ew))
         _cur = set(ew)
@@ -3130,8 +3174,27 @@ def run_one(job):
                       if _give > 0.0:
                           mat[j] -= _give
                           mat[i] += _give
-                  if (mat[i] - mem_w * len(known[i]) < ci
-                          or mat[j] - mem_w * len(known[j]) < cj):   # 远的／后伸的那只可能付不起
+                  # 2026-11-26：门槛按“这一臂实际要付的钱”判。0/1 的判法与收费逐位不变；
+                  # 2＝伸的那端付全额；3＝两端各付一半。
+                  if ONE_SIDE == 2:
+                      _need_i, _need_j = ci + cj, cj
+                  elif ONE_SIDE == 3:
+                      _need_i, _need_j = 0.5 * ci, 0.5 * ci
+                  elif ONE_SIDE == 4:          # 全额对半：两端各付 (ci+cj)/2
+                      _need_i = _need_j = 0.5 * (ci + cj)
+                  elif ONE_SIDE == 5:          # 只判付钱的那一端（收的一端完全不设门槛）
+                      _need_i, _need_j = ci, 0.0
+                  elif ONE_SIDE == 6:          # RPP：收款端付自己的那份，发起端免费
+                      _need_i, _need_j = 0.0, cj
+                  else:
+                      _need_i, _need_j = ci, cj
+                  _ok_i = mat[i] - mem_w * len(known[i]) >= _need_i
+                  _ok_j = mat[j] - mem_w * len(known[j]) >= _need_j
+                  if not _ok_i:
+                      _GATE["i"] += 1
+                  elif not _ok_j:
+                      _GATE["j"] += 1
+                  if (not _ok_i or not _ok_j):   # 远的／后伸的那只可能付不起
                       empty_arm += 1
                       c_armfail += 1
                       continue
@@ -3217,10 +3280,25 @@ def run_one(job):
 
                   _sw_n[i] += 1                # 用掉一份配额（SW_K>0 时才有意义）
                   a_, b_ = k
-                  if a_ == i:
-                      stk.setdefault(k, []).append((ci, cj))
+                  if STK_PAID > 0:
+                      if ONE_SIDE == 2:
+                          _p_i, _p_j = ci + cj, 0.0
+                      elif ONE_SIDE == 4:
+                          _p_i = _p_j = 0.5 * (ci + cj)
+                      elif ONE_SIDE == 3:
+                          _p_i = _p_j = 0.5 * ci
+                      elif ONE_SIDE in (1, 5):
+                          _p_i, _p_j = ci, 0.0
+                      elif ONE_SIDE == 6:
+                          _p_i, _p_j = 0.0, cj
+                      else:
+                          _p_i, _p_j = ci, cj
                   else:
-                      stk.setdefault(k, []).append((cj, ci))
+                      _p_i, _p_j = ci, cj
+                  if a_ == i:
+                      stk.setdefault(k, []).append((_p_i, _p_j))
+                  else:
+                      stk.setdefault(k, []).append((_p_j, _p_i))
                   if MAT_FLOW > 0 and mat[i] < ci:
                       _need = ci - mat[i]
                       _give = min(_need, max(0.0, (mat[j] - RESERVE)) * MAT_SHARE)
@@ -3228,9 +3306,31 @@ def run_one(job):
                           mat[j] -= _give
                           mat[i] += _give
                           m_flux = m_flux + _give if 'm_flux' in dir() else _give
-                  mat[i] -= ci
-                  if ONE_SIDE <= 0:            # 画面：**一个球伸出一条链** ⇒ 只由伸出的那端付（H54）
+                  if ONE_SIDE == 2:            # 2026-11-26：IPLF-全额，伸的那端付整条链
+                      mat[i] -= (ci + cj)
+                      _PAID["amt"] += ci + cj
+                  elif ONE_SIDE == 4:          # 2026-11-26：全额对半，两端各付 (ci+cj)/2
+                      mat[i] -= 0.5 * (ci + cj)
+                      mat[j] -= 0.5 * (ci + cj)
+                      _PAID["amt"] += ci + cj
+                  elif ONE_SIDE == 5:          # 与 1 相同的收费，只是收的一端不参与门槛
+                      mat[i] -= ci
+                      _PAID["amt"] += ci
+                  elif ONE_SIDE == 6:          # RPP：收款端付 cj，发起端免付
                       mat[j] -= cj
+                      _PAID["amt"] += cj
+                  elif ONE_SIDE == 3:          # 2026-11-26：双边-对半，总额与 ONE_SIDE=1 相同
+                      mat[i] -= 0.5 * ci
+                      mat[j] -= 0.5 * ci
+                      _PAID["amt"] += ci
+                  else:
+                      mat[i] -= ci
+                      if ONE_SIDE <= 0:        # 画面：**一个球伸出一条链** ⇒ 只由伸出的那端付（H54）
+                          mat[j] -= cj
+                          _PAID["amt"] += ci + cj
+                      else:
+                          _PAID["amt"] += ci
+                  _PAID["n"] += 1
                   m_build += ci + cj
                   deg[i] += 1
                   deg[j] += 1
@@ -3277,13 +3377,40 @@ def run_one(job):
                     if _give > 0.0:
                         mat[j] -= _give
                         mat[i] += _give
-                if (mat[i] - mem_w * len(known[i]) < ci
-                        or mat[j] - mem_w * len(known[j]) < cj):
+                if ONE_SIDE == 2:
+                    _need_i, _need_j = ci + cj, cj
+                elif ONE_SIDE == 3:
+                    _need_i, _need_j = 0.5 * ci, 0.5 * ci
+                elif ONE_SIDE == 4:
+                    _need_i = _need_j = 0.5 * (ci + cj)
+                elif ONE_SIDE == 5:
+                    _need_i, _need_j = ci, 0.0
+                elif ONE_SIDE == 6:
+                    _need_i, _need_j = 0.0, cj
+                else:
+                    _need_i, _need_j = ci, cj
+                if (mat[i] - mem_w * len(known[i]) < _need_i
+                        or mat[j] - mem_w * len(known[j]) < _need_j):
                     continue
                 k = ekey(i, j)
                 ew[k] = ew.get(k, 0) + 1     # 同上：初值恒 1
                 _LNK['b'] += 1          # 诊断：B 路（补链/批量）建的链数
-                stk.setdefault(k, []).append((ci, cj) if i < j else (cj, ci))
+                if STK_PAID > 0:
+                    if ONE_SIDE == 2:
+                        _p_i, _p_j = ci + cj, 0.0
+                    elif ONE_SIDE == 4:
+                        _p_i = _p_j = 0.5 * (ci + cj)
+                    elif ONE_SIDE == 3:
+                        _p_i = _p_j = 0.5 * ci
+                    elif ONE_SIDE in (1, 5):
+                        _p_i, _p_j = ci, 0.0
+                    elif ONE_SIDE == 6:
+                        _p_i, _p_j = 0.0, cj
+                    else:
+                        _p_i, _p_j = ci, cj
+                else:
+                    _p_i, _p_j = ci, cj
+                stk.setdefault(k, []).append((_p_i, _p_j) if i < j else (_p_j, _p_i))
                 if MAT_FLOW > 0 and mat[i] < ci:
                     _need = ci - mat[i]
                     _give = min(_need, max(0.0, (mat[j] - RESERVE)) * MAT_SHARE)
@@ -3291,9 +3418,28 @@ def run_one(job):
                         mat[j] -= _give
                         mat[i] += _give
                         m_flux = m_flux + _give if 'm_flux' in dir() else _give
-                mat[i] -= ci
-                if ONE_SIDE <= 0:            # 画面：**一个球伸出一条链** ⇒ 只由伸出的那端付（H54）
+                if ONE_SIDE == 2:
+                    mat[i] -= (ci + cj)
+                    _PAID["amt"] += ci + cj
+                elif ONE_SIDE == 4:
+                    mat[i] -= 0.5 * (ci + cj)
+                    mat[j] -= 0.5 * (ci + cj)
+                    _PAID["amt"] += ci + cj
+                elif ONE_SIDE == 3:
+                    mat[i] -= 0.5 * ci
+                    mat[j] -= 0.5 * ci
+                    _PAID["amt"] += ci
+                elif ONE_SIDE == 6:
                     mat[j] -= cj
+                    _PAID["amt"] += cj
+                else:
+                    mat[i] -= ci
+                    if ONE_SIDE <= 0:        # 画面：**一个球伸出一条链** ⇒ 只由伸出的那端付（H54）
+                        mat[j] -= cj
+                        _PAID["amt"] += ci + cj
+                    else:
+                        _PAID["amt"] += ci
+                _PAID["n"] += 1
                 m_build += ci + cj
                 deg[i] += 1
                 deg[j] += 1
@@ -4262,9 +4408,12 @@ def run_one(job):
                 for j in list(adj.get(i, [])):
                     k = ekey(i, j)
                     if k in ew:
+                        # 2026-11-26 审计：退款必须按 k 的两个端点（与栈同序）入账，
+                        # 原先直接写到 i/j —— i 恰好是较大 id 时两端份额会记反。
+                        _ai_, _bi_ = k
                         for _pa, _pb in stk.pop(k, []):
-                            mat[i] += REFUND * _pa
-                            mat[j] += REFUND * _pb
+                            mat[_ai_] += REFUND * _pa
+                            mat[_bi_] += REFUND * _pb
                             m_refund += REFUND * (_pa + _pb)
                         del ew[k]
                         deg[j] -= 1
@@ -4421,6 +4570,7 @@ def run_one(job):
                     mat[_a0] -= ca
                     mat[_b0] -= cb
                     m_build += ca + cb
+                    _PAID["thick"] = _PAID.get("thick", 0.0) + ca + cb   # 加粗的实付单列（不让"每链信用"虚高）
                     if ew[k] == 2 and k not in first_thick:
                         first_thick[k] = step
             # 减一束：概率 eps*(1-T)，独立的一项（系数不同、驱动量不同，不是加粗取负号）
@@ -4654,6 +4804,7 @@ def run_one(job):
         "m_split": dict(
             init=sum(MAT0[tier[_i]] * mat_scale for _i in range(N)), now=sum(mat),
             build=m_build, refund=m_refund, poke=m_poke, lost=m_lost,
+            paid=float(_PAID["amt"]), thick_paid=float(_PAID.get("thick", 0.0)),
             post_build=m_build - _m_at_dis[0], post_refund=m_refund - _m_at_dis[1],
             post_poke=m_poke - _m_at_dis[2],
             poke_n=_KC3.get("n", 0), poke_cost=_KC3.get("cost", 0.0),
@@ -5250,6 +5401,8 @@ BASELINE = {
     "SEEK_HOPS": 0,
     "MERGE_VAL": 0.0,
     "ONE_SIDE": 0,
+    "FREEZE_PRE": 0,
+    "STK_PAID": 1,
     "SKY_WIN": 0,
     "SAT_PASS": 0,
     "S_SAT": 3,
@@ -5405,6 +5558,8 @@ def reset():
                       ("_KC2", {"probe": 0, "poke": 0, "poke_g0": 0, "probe_g0": 0,
                                 "probe_g2": 0, "poke_g2": 0}),
                       ("_KC3", {"n": 0, "cost": 0.0, "poor": 0}),
+                      ("_GATE", {"i": 0, "j": 0}),
+                      ("_PAID", {"amt": 0.0, "n": 0}),
                       ("_KC4", {"n": 0, "poor": 0}),
                       ("_RI", {"swap": 0, "chance": 0, "bwbad": 0, "swap1": 0, "steps": 0}),
                       ("_DIA", {"hop": 0.0, "thick_hop": 0.0, "e_t": 0.0, "e_a": 0.0}),

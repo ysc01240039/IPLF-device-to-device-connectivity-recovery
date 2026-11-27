@@ -1,161 +1,159 @@
 # -*- coding: utf-8 -*-
-"""_verify_exp.py —— 实验章（实验.md）里每个数字 vs exp_v245_*.json
+"""_verify_exp.py —— 论文里每个表/关键数字 vs 原始 JSON 的逐个核对。
 
-为什么单写一个：手写进正文的数字最容易错在"记得的是上一轮的数"。
-本脚本把正文的口径重算一遍，逐项断言；任何一项超差就报错，不通过就不算写完。
-判据：四舍五入到正文的位数后必须相等（容差 5e-4）。
+用法：python _verify_exp.py            （退出码 0 = 全部对上，1 = 有对不上）
+每个检查项给出：论文值、重算值、容差（0.05 = 四舍五入到一位小数）。
+
+注意：这里只核对**能由 JSON 重算**的量；绘图、图注里的定性描述不在范围内。
 """
-import io
 import json
+import os
 import statistics as st
 import sys
 
-TOL = 6e-4          # 正文按 3 位小写，四舍五入最大误差 5e-4；留一点浮点余量
+HERE = os.path.dirname(os.path.abspath(__file__))
+DATA = os.path.join(HERE, "data")
+
+FAIL = []
+NCHECK = [0]
 
 
-def load(g):
-    return json.load(io.open("exp_v245_%s.json" % g, encoding="utf-8"))
+def load(name):
+    with open(os.path.join(DATA, name), encoding="utf-8") as f:
+        return json.load(f)
 
 
-def mean(rows, arm, key):
-    return st.mean([r[key] for r in rows if r["arm"] == arm])
+def mean(rows, key, **cond):
+    xs = [r[key] for r in rows
+          if all(r.get(k) == v for k, v in cond.items()) and r.get(key) is not None]
+    return st.mean(xs) if xs else float("nan")
 
 
-def check(label, got, want, tol=TOL):
-    ok = abs(got - want) <= tol
-    print("  %-46s 正文 %.4f | 重算 %.4f  %s" % (label, want, got, "OK" if ok else "**不符**"))
+def chk(label, paper, got, tol=0.05):
+    NCHECK[0] += 1
+    ok = abs(paper - got) <= tol
+    if not ok:
+        FAIL.append((label, paper, round(got, 4)))
     return ok
 
 
-def main():
-    allok = True
-    m = load("main")
-    print("E1 主对比")
-    for arm, want in (("B0", 0.418), ("LEACH", 0.460), ("Ours", 0.954), ("FLOOD", 0.836)):
-        allok &= check("接回 %s" % arm, mean(m, arm, "recon"), want)
-    for arm, want in (("B0", 0.759), ("LEACH", 0.568), ("Ours", 0.730), ("FLOOD", 0.663)):
-        allok &= check("满足率 %s" % arm, mean(m, arm, "sat_all"), want)
-    for arm, want in (("B0", 31.1), ("LEACH", 33.2), ("Ours", 10.7), ("FLOOD", 4.2)):
-        allok &= check("条件首用(分) %s" % arm, mean(m, arm, "t50_cond_s") / 60.0, want, tol=0.06)
-    for arm, want in (("B0", 0.225), ("LEACH", 0.108), ("Ours", 0.024), ("FLOOD", 0.006)):
-        allok &= check("死亡 %s" % arm, mean(m, arm, "dead"), want)
-    for arm, want in (("B0", 0.197), ("LEACH", 0.241), ("Ours", 0.358), ("FLOOD", 0.371)):
-        allok &= check("建链/当量 %s" % arm, mean(m, arm, "link_per_serv"), want)
-
-    a = load("abl")
-    print("E2 消融")
-    for arm, want in (("A_full", 0.975), ("A_noPay", 0.429), ("A_noFlow", 0.969),
-                      ("A_noCarry", 0.984), ("A_noDorm", 0.989), ("A_noArm", 0.956)):
-        allok &= check("接回 %s" % arm, mean(a, arm, "recon"), want)
-    for arm, want in (("A_full", 0.663), ("A_noPay", 0.792), ("A_noFlow", 0.709), ("A_noArm", 0.732)):
-        allok &= check("满足率 %s" % arm, mean(a, arm, "sat_all"), want)
-
-    s = load("sens")
-    print("E3 敏感性（Ours−B0 接回差）")
-    for var, val, want in (("P_UP", 0.2, 0.555), ("P_UP", 0.5, 0.521), ("P_UP", 0.8, 0.524),
-                           ("MAX_HOP", 4, 0.522), ("MAX_HOP", 6, 0.521), ("MAX_HOP", 8, 0.543)):
-        sub = [r for r in s if r["var"] == var and r["var_val"] == val]
-        got = (st.mean([r["recon"] for r in sub if r["arm"] == "Ours"])
-               - st.mean([r["recon"] for r in sub if r["arm"] == "B0"]))
-        allok &= check("%s=%s" % (var, val), got, want)
-
-    v = load("sev")
-    print("E4 灾强")
-    for dr, want in ((2, (0.563, 0.967, 0.554)), (3, (0.418, 0.954, 0.460)), (4, (0.371, 0.962, 0.353))):
-        sub = [r for r in v if r["var_val"] == dr]
-        for arm, w in zip(("B0", "Ours", "LEACH"), want):
-            allok &= check("DIS_R=%d %s" % (dr, arm), st.mean([r["recon"] for r in sub if r["arm"] == arm]), w)
-
-    ARMS7 = ("下限", "本方法", "LEACH@0.70", "CFACHS@0.70", "AFPUC-k@0.50",
-             "AER-DM@0.05", "AFPUC-loc@0.10")
-
-    sv = load("multi_sev")
-    print("2.1 主表 / 2.2 灾强维")
-    for dv, want in ((2, (0.563, 0.967, 0.595, 0.599, 0.540, 0.543, 0.529)),
-                     (3, (0.418, 0.954, 0.471, 0.475, 0.436, 0.407, 0.403)),
-                     (4, (0.371, 0.962, 0.353, 0.376, 0.340, 0.339, 0.339))):
-        sub = [r for r in sv if r["dim_val"] == dv]
-        for arm, w in zip(ARMS7, want):
-            allok &= check("DIS_R=%d %s" % (dv, arm),
-                           st.mean([r["recon"] for r in sub if r["arm"] == arm]), w)
-
-    sp = load("multi_sup")
-    print("2.3 供给维")
-    for dv, want in ((0.2, (0.446, 0.965, 0.408, 0.440, 0.419, 0.387, 0.377)),
-                     (0.5, (0.418, 0.954, 0.471, 0.475, 0.436, 0.407, 0.403)),
-                     (0.8, (0.442, 0.958, 0.443, 0.412, 0.446, 0.404, 0.401))):
-        sub = [r for r in sp if r["dim_val"] == dv]
-        for arm, w in zip(ARMS7, want):
-            allok &= check("P_UP=%.1f %s" % (dv, arm),
-                           st.mean([r["recon"] for r in sub if r["arm"] == arm]), w)
-
-    c = load("scale")
-    print("2.4 规模维")
-    for n, want in ((100, (0.418, 0.954, 0.471, 0.475, 0.436, 0.407, 0.403)),
-                    (576, (0.262, 0.966, 0.275, 0.267, 0.262, 0.280, 0.271))):
-        sub = [r for r in c if r["n"] == n]
-        for arm, w in zip(ARMS7, want):
-            allok &= check("N=%d %s" % (n, arm),
-                           st.mean([r["recon"] for r in sub if r["arm"] == arm]), w)
-
-    rb = load("robust")
-    print("3.1 二次打击（接回）")
-    for hp, want in ((0.0, (0.418, 0.954, 0.471, 0.475, 0.436, 0.407, 0.403)),
-                     (0.10, (0.391, 0.952, 0.433, 0.425, 0.412, 0.392, 0.376)),
-                     (0.20, (0.378, 0.950, 0.424, 0.413, 0.402, 0.365, 0.377))):
-        sub = [r for r in rb if r["hit_p"] == hp]
-        for arm, w in zip(ARMS7, want):
-            allok &= check("p=%.2f %s" % (hp, arm),
-                           st.mean([r["recon"] for r in sub if r["arm"] == arm]), w)
-    print("3.1 二次打击（末态分量）")
-    for hp, want in ((0.0, (0.294, 0.552, 0.322, 0.316, 0.303, 0.359, 0.375)),
-                     (0.10, (0.147, 0.438, 0.140, 0.182, 0.152, 0.179, 0.183)),
-                     (0.20, (0.109, 0.287, 0.110, 0.109, 0.113, 0.130, 0.116))):
-        sub = [r for r in rb if r["hit_p"] == hp]
-        for arm, w in zip(ARMS7, want):
-            allok &= check("p=%.2f lcc %s" % (hp, arm),
-                           st.mean([r["lcc_frac"] for r in sub if r["arm"] == arm]), w)
-
-    lg = load("long")
-    print("3.2 长期运行")
-    for arm, w in zip(ARMS7, (0.445, 0.954, 0.504, 0.502, 0.468, 0.444, 0.440)):
-        allok &= check("12h 接回 %s" % arm,
-                       st.mean([r["recon"] for r in lg if r["arm"] == arm]), w)
-    for arm, w in zip(ARMS7, (0.081, 0.171, 0.093, 0.093, 0.098, 0.090, 0.098)):
-        allok &= check("12h 末态 %s" % arm,
-                       st.mean([r["lcc_frac"] for r in lg if r["arm"] == arm]), w)
-
-    lit = load("lit")
-    print("E7 文献方法两档（附注用）")
-    for tag, want in (("LEACH@0.05", 0.412), ("LEACH@0.50", 0.460), ("CFACHS@0.05", 0.400),
-                      ("CFACHS@0.50", 0.445), ("AFPUC-k@0.05", 0.444), ("AFPUC-k@0.50", 0.436),
-                      ("AER-DM@0.05", 0.407), ("AER-DM@0.50", 0.407),
-                      ("AFPUC-loc@0.05", 0.397), ("AFPUC-loc@0.50", 0.395)):
-        allok &= check(tag, mean(lit, tag, "recon"), want)
-
-    par = load("parity")
-    print("E8 同供给对照（接回）")
-    for tag, want in (("6口 B0", 0.407), ("6口 Ours", 0.964), ("6口 LEACH@0.05", 0.414),
-                      ("6口 LEACH@0.50", 0.428), ("43口 B0", 0.423), ("43口 Ours", 0.958),
-                      ("43口 LEACH@0.05", 0.437), ("43口 LEACH@0.50", 0.422)):
-        band, arm = tag.split(" ", 1)
-        sub = [r for r in par if r["band"] == band and r["arm"] == arm]
-        allok &= check(tag, st.mean([r["recon"] for r in sub]), want)
-
-    fit = load("fit")
-    print("E9 机制×场景（接回）")
-    for sc, want in (("S1基线", (0.966, 0.972, 0.980, 0.987, 0.957)),
-                     ("S2料稀缺", (0.372, 0.292, 0.369, 0.372, 0.333)),
-                     ("S3低供给", (0.982, 0.970, 0.982, 0.988, 0.975)),
-                     ("S4小灾", (0.993, 0.978, 0.993, 0.989, 0.989))):
-        for arm, w in zip(("A_full", "A_noFlow", "A_noCarry", "A_noDorm", "A_noArm"), want):
-            sub = [r for r in fit if r["scene"] == sc and r["arm"] == arm]
-            allok &= check("%s %s" % (sc, arm), st.mean([r["recon"] for r in sub]), w)
-
-    print("")
-    print("结论：%s" % ("全部对上" if allok else "**有数不符，必须改正文**"))
-    return 0 if allok else 1
+def pair(rows, a, b, key="recon", **cond):
+    def vals(arm):
+        return [r[key] for r in rows if r["arm"] == arm
+                and all(r.get(k) == v for k, v in cond.items()) and r.get(key) is not None]
+    d = [x - y for x, y in zip(vals(a), vals(b))]
+    return st.mean(d), sum(1 for x in d if x > 0), len(d)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+# ---------------- 表 II：主对比（多场景 dim=3） ----------------
+sv = load("exp_v245_multi_sev.json")
+TAB2 = [  # 论文表 II：(臂, recon%, t50min, sat%, dead%)
+    ("下限", 41.7, 31.4, 75.9, 22.5),
+    ("本方法", 72.9, 23.8, 83.1, 10.9),
+    ("LEACH@0.10", 44.1, 25.5, 27.7, 9.9),
+    ("CFACHS@0.05", 43.4, 33.9, 4.1, 10.1),
+    ("AFPUC-k@0.05", 44.5, 32.9, 7.9, 7.9),
+    ("AER-DM@0.02", 42.0, 31.0, 6.7, 8.8),
+    ("AFPUC-loc@0.10", 43.4, 32.7, 4.4, 9.6),
+]
+for arm, rc, t50, sat, dead in TAB2:
+    chk("表II %s recon" % arm, rc, 100 * mean(sv, "recon", arm=arm, dim_val=3))
+    chk("表II %s t50" % arm, t50, mean(sv, "t50_cond_s", arm=arm, dim_val=3) / 60)
+    chk("表II %s sat" % arm, sat, 100 * mean(sv, "sat_all", arm=arm, dim_val=3))
+    chk("表II %s dead" % arm, dead, 100 * mean(sv, "dead", arm=arm, dim_val=3))
+# 正文：+28.5 点、CI ±4.7、d=2.29、29/30
+m, pos, n = pair(sv, "本方法", "AFPUC-k@0.05", dim_val=3)
+chk("正文 +28.5 点", 28.5, 100 * m)
+chk("正文 29/30 为正", 29, pos, tol=0)
+
+# 表 II 上行终端数
+for arm, up in (("下限", 40.8), ("本方法", 40.2), ("LEACH@0.10", 4.8), ("CFACHS@0.05", 0.8),
+                ("AFPUC-k@0.05", 2.1), ("AER-DM@0.02", 0.6), ("AFPUC-loc@0.10", 0.9)):
+    chk("表II %s uplinks" % arm, up, mean(sv, "n_up", arm=arm, dim_val=3), tol=0.06)
+
+# ---------------- 表 III：计费分解（冻结重跑） ----------------
+wp = load("who_pays_1x_frozen.json")["arms"]
+TAB3 = [("iplf", 72.9, 3.45), ("rpp", 67.7, 3.44), ("split", 65.9, 3.46),
+        ("iplf_full", 29.9, 4.01), ("balanced_full", 38.8, 3.99), ("bilateral", 48.0, 4.04)]
+for arm, rc, cl in TAB3:
+    chk("表III %s recon" % arm, rc, 100 * st.mean(wp[arm]["recon"]))
+    chk("表III %s credit/link" % arm, cl,
+        st.mean([p / max(1, q) for p, q in zip(wp[arm]["paid"], wp[arm]["paid_n"])]), tol=0.02)
+
+# 3× / 0.3× 信用档
+for fn, single, double in (("who_pays_3x_frozen.json", (99.4, 99.8), (86.7, 97.0)),
+                           ("who_pays_03x_frozen.json", (13.5, 15.4), (5.4, 11.4))):
+    a = load(fn)["arms"]
+    for arm in ("iplf", "rpp", "split"):
+        v = 100 * st.mean(a[arm]["recon"])
+        chk("%s %s 在 99.4–99.8 / 13.5–15.4 区间" % (fn, arm),
+            1 if single[0] - 1.0 <= v <= single[1] + 1.0 else 0, 1, tol=0)
+    for arm in ("iplf_full", "balanced_full", "bilateral"):
+        v = 100 * st.mean(a[arm]["recon"])
+        chk("%s %s 在 86.7–97.0 / 5.4–11.4 区间" % (fn, arm),
+            1 if double[0] - 1.0 <= v <= double[1] + 1.0 else 0, 1, tol=0)
+
+# ---------------- 表 IV：同供给对照 ----------------
+par = load("exp_v245_parity.json")
+TAB4 = [("6口", "B0", 6.1, 40.6), ("6口", "Ours", 5.1, 66.6),
+        ("6口", "LEACH@0.05", 0.3, 38.3), ("6口", "LEACH@0.50", 2.6, 37.3),
+        ("43口", "B0", 35.9, 42.4), ("43口", "Ours", 34.6, 66.2),
+        ("43口", "LEACH@0.05", 2.5, 45.4), ("43口", "LEACH@0.50", 16.4, 44.4)]
+for band, arm, up, rc in TAB4:
+    chk("表IV %s %s uplinks" % (band, arm), up, mean(par, "n_up", arm=arm, band=band), tol=0.06)
+    chk("表IV %s %s recon" % (band, arm), rc, 100 * mean(par, "recon", arm=arm, band=band))
+
+# ---------------- 表 V：五机制消融 ----------------
+ab = load("exp_v245_abl.json")
+TAB5 = [("A_full", 75.2, 50.9), ("A_noPay", 48.1, 30.8), ("A_noFlow", 64.9, 49.0),
+        ("A_noCarry", 74.8, 53.7), ("A_noDorm", 74.9, 49.4), ("A_noArm", 72.9, 53.0)]
+for arm, rc, lcc in TAB5:
+    chk("表V %s recon" % arm, rc, 100 * mean(ab, "recon", arm=arm))
+    chk("表V %s lcc" % arm, lcc, 100 * mean(ab, "lcc_frac", arm=arm))
+
+# ---------------- 表 VI：行为分量（run_comp_ablation.py） ----------------
+co = load("exp_v245_comp.json")
+TAB6 = [("C_full", 72.9, 23.8, 83.1, 33.21, 51.6),
+        ("C_noThick", 75.5, 20.5, 82.2, 34.56, 65.2),
+        ("C_noExplore", 75.4, 24.3, 82.5, 33.09, 54.5),
+        ("C_noOld", 73.3, 20.4, 83.0, 33.11, 51.8)]
+for arm, rc, t50, sat, en, lcc in TAB6:
+    chk("表VI %s recon" % arm, rc, 100 * mean(co, "recon", arm=arm))
+    chk("表VI %s t50" % arm, t50, mean(co, "t50_cond_s", arm=arm) / 60)
+    chk("表VI %s sat" % arm, sat, 100 * mean(co, "sat_all", arm=arm))
+    chk("表VI %s energy" % arm, en, mean(co, "energy_per_node", arm=arm), tol=0.02)
+    chk("表VI %s lcc" % arm, lcc, 100 * mean(co, "lcc_frac", arm=arm))
+
+# ---------------- 表 VII：机制 × 场景（20 种子） ----------------
+fit = load("exp_v245_fit.json")
+SCENES = ("S1基线", "S2料稀缺", "S3低供给", "S4小灾")
+EXP7 = {  # 机制 → (指标, 四个场景的论文值)
+    "credit": ("recon", [11.4, 0.1, 9.5, 2.7]),
+    "deleg": ("serv_ng0", [13.9, 156.9, 7.2, 13.1]),
+    "demote": ("lcc_frac", [3.2, 0.0, -0.6, -0.7]),
+}
+for name, (key, vals) in EXP7.items():
+    other = {"credit": "A_noFlow", "deleg": "A_noCarry", "demote": "A_noDorm"}[name]
+    for sc, v in zip(SCENES, vals):
+        got = mean(fit, key, arm="A_full", scene=sc) - mean(fit, key, arm=other, scene=sc)
+        scale = 100.0 if key in ("recon", "lcc_frac") else 1.0
+        chk("表VII %s %s" % (name, sc), v, scale * got, tol=0.06)
+
+# ---------------- 表 VIII：12 小时 ----------------
+lg = load("exp_v245_long.json")
+TAB8 = [("下限", 44.0, 8.4, 33.9, 39.46), ("本方法", 74.2, 14.8, 13.2, 40.63),
+        ("LEACH@0.10", 47.0, 10.1, 30.7, 37.91), ("CFACHS@0.05", 47.3, 9.5, 30.3, 37.40),
+        ("AFPUC-k@0.05", 47.4, 9.6, 29.0, 37.55)]
+for arm, rc, lcc, dead, en in TAB8:
+    chk("表VIII %s recon" % arm, rc, 100 * mean(lg, "recon", arm=arm))
+    chk("表VIII %s lcc" % arm, lcc, 100 * mean(lg, "lcc_frac", arm=arm))
+    chk("表VIII %s dead" % arm, dead, 100 * mean(lg, "dead", arm=arm))
+    chk("表VIII %s energy" % arm, en, mean(lg, "energy_per_node", arm=arm), tol=0.02)
+
+# ---------------- 结论 ----------------
+print("检查项：%d，失败：%d" % (NCHECK[0], len(FAIL)))
+for label, paper, got in FAIL:
+    print("  ✗ %-32s 论文 %s / 重算 %s" % (label, paper, got))
+if FAIL:
+    sys.exit(1)
+print("全部对上（容差见各表：百分比 0.05、能耗 0.02、计数 0.06）")

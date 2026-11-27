@@ -1,0 +1,15 @@
+nodes,method,recon
+100,lower,0.4174
+100,ours,0.7294
+100,leach,0.4406
+100,cfachs,0.4344
+100,afpuck,0.4445
+100,aerdm,0.4204
+100,afpucloc,0.4344
+576,lower,0.2673
+576,ours,0.5468
+576,leach,0.2694
+576,cfachs,0.2683
+576,afpuck,0.2714
+576,aerdm,0.2713
+576,afpucloc,0.2728

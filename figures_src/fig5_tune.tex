@@ -1,0 +1,58 @@
+% fig5_tune.tex —— 图 5（baseline 调参曲线）源文件。standalone 编译：
+%   pdflatex fig5_tune.tex
+% 数据：../data/tune_wide.csv（make_tables.py 生成）
+\documentclass[border=4pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\pgfplotstableset{col sep=comma}
+
+\definecolor{cOurs}{RGB}{196,30,58}
+\definecolor{cLower}{RGB}{120,120,120}
+\definecolor{cLeach}{RGB}{31,119,180}
+\definecolor{cCfachs}{RGB}{255,127,14}
+\definecolor{cAfpuck}{RGB}{44,160,44}
+\definecolor{cAerdm}{RGB}{148,103,189}
+\definecolor{cAfpucloc}{RGB}{140,86,75}
+
+\begin{document}
+\begin{tikzpicture}
+\begin{axis}[
+  width=8.4cm, height=5.2cm,
+  tick label style={font=\footnotesize},
+  label style={font=\footnotesize},
+  legend style={font=\scriptsize, draw=none, fill=none, at={(0.5,-0.28)},
+                anchor=north, legend columns=3, column sep=1.2ex},
+  ylabel={reconnection rate (\%)},
+  xlabel={cluster-head ratio $\mathrm{CH}_P$},
+  xmin=0, xmax=1, ymin=0, ymax=100,
+  xtick={0,0.2,0.4,0.6,0.8,1},
+  grid=major, grid style={gray!18},
+  ymajorgrids=true, xmajorgrids=false,
+]
+\addplot[color=cOurs, mark=none, line width=1.2pt]
+  coordinates {(0,72.9) (1,72.9)};
+\addlegendentry{IPLF}
+
+\addplot[color=cLeach, mark=*, mark size=1.2pt, line width=0.7pt]
+  table[x=chp, y expr=\thisrow{leach}*100] {../data/tune_wide.csv};
+\addlegendentry{LEACH}
+
+\addplot[color=cCfachs, mark=square*, mark size=1.2pt, line width=0.7pt]
+  table[x=chp, y expr=\thisrow{cfachs}*100] {../data/tune_wide.csv};
+\addlegendentry{CFACHS}
+
+\addplot[color=cAfpuck, mark=triangle*, mark size=1.4pt, line width=0.7pt]
+  table[x=chp, y expr=\thisrow{afpuck}*100] {../data/tune_wide.csv};
+\addlegendentry{AFPUC-$k$}
+
+\addplot[color=cAerdm, mark=diamond*, mark size=1.3pt, line width=0.7pt]
+  table[x=chp, y expr=\thisrow{aerdm}*100] {../data/tune_wide.csv};
+\addlegendentry{ST}
+
+\addplot[color=cAfpucloc, mark=pentagon*, mark size=1.3pt, line width=0.7pt]
+  table[x=chp, y expr=\thisrow{afpucloc}*100] {../data/tune_wide.csv};
+\addlegendentry{AFPUC-loc}
+\end{axis}
+\end{tikzpicture}
+\end{document}

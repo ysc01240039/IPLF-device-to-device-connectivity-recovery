@@ -1,31 +1,33 @@
 # -*- coding: utf-8 -*-
-"""make_data.py —— 把实验产物（exp_v245_*.json）导出成论文用的 csv。
+"""make_tables.py —— 把 data/exp_v245_*.json 导出成论文用的 csv。
 
-为什么单独一步：
-  论文里的每张图都从 csv 读，图与数之间只隔一层 `\addplot table`，
-  改数据不用改正文；反过来，正文里出现的每个数都能顺着 csv 回到 json 的某一行。
+论文里每张图都从 csv 读（pgfplots `\\addplot table`），图与数之间只隔一层；
+正文里出现的每个数也都能顺着 csv 回到 json 的某一行。
 
-用法：python make_data.py
+用法：python make_tables.py      （读 data/*.json，写 data/*.csv）
 """
 import io
 import json
 import os
 import statistics as st
 
-SRC = os.path.abspath(os.path.join(os.path.dirname(__file__),
-                                   "..", "..", "自用原创_光球与光网_20261024",
-                                   "前置实验", "生长模型"))
-OUT = os.path.join(os.path.dirname(__file__), "data")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(HERE, "data") if os.path.isdir(os.path.join(HERE, "data")) else HERE
+OUT = SRC
 os.makedirs(OUT, exist_ok=True)
 
-ARMS7 = ["下限", "本方法", "LEACH@0.70", "CFACHS@0.70", "AFPUC-k@0.50",
-         "AER-DM@0.05", "AFPUC-loc@0.10"]
-SHORT = {"下限": "lower", "本方法": "ours", "LEACH@0.70": "leach", "CFACHS@0.70": "cfachs",
-         "AFPUC-k@0.50": "afpuck", "AER-DM@0.05": "aerdm", "AFPUC-loc@0.10": "afpucloc"}
+ARMS7 = ["下限", "本方法", "LEACH@0.10", "CFACHS@0.05", "AFPUC-k@0.05",
+         "AER-DM@0.02", "AFPUC-loc@0.10"]
+SHORT = {"下限": "lower", "本方法": "ours", "LEACH@0.10": "leach", "CFACHS@0.05": "cfachs",
+         "AFPUC-k@0.05": "afpuck", "AER-DM@0.02": "aerdm", "AFPUC-loc@0.10": "afpucloc"}
+SH = ["lower", "ours", "leach", "cfachs", "afpuck", "aerdm", "afpucloc"]
+MODE = [("leach", 0), ("cfachs", 1), ("afpuck", 2), ("aerdm", 3), ("afpucloc", 4)]
+CHPS = [0.02, 0.05, 0.10, 0.20, 0.30, 0.50, 0.70, 0.85, 0.95]
 
 
 def load(name):
-    return json.load(io.open(os.path.join(SRC, "exp_v245_%s.json" % name), encoding="utf-8"))
+    with io.open(os.path.join(SRC, "exp_v245_%s.json" % name), encoding="utf-8") as f:
+        return json.load(f)
 
 
 def write(fn, header, rows):
@@ -38,9 +40,15 @@ def write(fn, header, rows):
 
 
 def mean(rows, key, **cond):
-    sub = [r for r in rows if all(r[k] == v for k, v in cond.items())]
+    sub = [r for r in rows if all(r.get(k) == v for k, v in cond.items())]
     vals = [r[key] for r in sub if r.get(key) is not None]
     return st.mean(vals) if vals else float("nan")
+
+
+def sd_of(rows, key, **cond):
+    sub = [r for r in rows if all(r.get(k) == v for k, v in cond.items())]
+    vals = [r[key] for r in sub if r.get(key) is not None]
+    return st.stdev(vals) if len(vals) > 1 else 0.0
 
 
 def main():
@@ -127,14 +135,22 @@ def main():
             rows.append([v, nm, round(mean(ft, "recon", scene=k, arm=arm), 4)])
     write("fit.csv", ["scene", "arm", "recon"], rows)
 
-    # ---- 调参网格 ----
+    # ---- 调参网格（宽表先出，窄表由宽表回导，保证都是 9 个比值、0.70 不重复）----
     t1, t2 = load("tune"), load("tune2")
+    wide = []
+    for c in CHPS:
+        src = t1 if c <= 0.70 else t2
+        wide.append([("%.2f" % c)] + ["%.4f" % mean(src, "recon", mode=m, chp=c) for _, m in MODE])
+    with io.open(os.path.join(OUT, "tune_wide.csv"), "w", encoding="utf-8", newline="\n") as f:
+        f.write("chp," + ",".join(n for n, _ in MODE) + "\n")
+        for r in wide:
+            f.write(",".join(str(x) for x in r) + "\n")
+    print("  %-18s %3d 行" % ("tune_wide.csv", len(wide)))
+
     rows = []
-    for nm, mode in (("leach", 0), ("cfachs", 1), ("afpuck", 2), ("aerdm", 3), ("afpucloc", 4)):
-        for chp in (0.02, 0.05, 0.10, 0.20, 0.30, 0.50, 0.70):
-            rows.append([nm, chp, round(mean(t1, "recon", mode=mode, chp=chp), 4)])
-        for chp in (0.70, 0.85, 0.95):
-            rows.append([nm, chp, round(mean(t2, "recon", mode=mode, chp=chp), 4)])
+    for j, (nm, _m) in enumerate(MODE):
+        for r in wide:
+            rows.append([nm, r[0], r[1 + j]])
     write("tune.csv", ["method", "chp", "recon"], rows)
 
     # ---- 同供给对照 ----
@@ -150,45 +166,24 @@ def main():
                          round(st.mean([x["sat_all"] for x in s]), 4)])
     write("parity.csv", ["band", "method", "nup", "recon", "sat"], rows)
 
-    # ---- 宽表（供 pgfplots 直接画线：每个方法一列，含 ±1 std 误差棒）----
-    def sd_of(rows, key, **cond):
-        sub = [r for r in rows if all(r[k] == v for k, v in cond.items())]
-        vals = [r[key] for r in sub if r.get(key) is not None]
-        return st.stdev(vals) if len(vals) > 1 else 0.0
-
-    def wide(fn, xs, keys, getter, sgetter=None):
-        hdr = list(keys)
-        if sgetter is not None:
-            for k in keys[1:]:
-                hdr.append("e" + k)
-        with io.open(os.path.join(OUT, fn), "w", encoding="utf-8", newline="\n") as f:
-            f.write(",".join(hdr) + "\n")
-            for x in xs:
-                row = [str(x)] + [("%.4f" % getter(x, k)) for k in keys[1:]]
-                if sgetter is not None:
-                    row += [("%.4f" % sgetter(x, k)) for k in keys[1:]]
-                f.write(",".join(row) + "\n")
-        print("  %-18s %3d 行%s" % (fn, len(xs), " (+std)" if sgetter else ""))
-
-    SH = ["lower", "ours", "leach", "cfachs", "afpuck", "aerdm", "afpucloc"]
+    # ---- 宽表（供 pgfplots 直接画线，含 ±1 std 误差棒）----
     REV = {v: k for k, v in SHORT.items()}
-
-    wide("sev_wide.csv", [2, 3, 4], ["disr"] + SH,
-         lambda x, k: 0.0 if k == "disr" else mean(sv, "recon", dim_val=x, arm=REV[k]),
-         lambda x, k: 0.0 if k == "disr" else sd_of(sv, "recon", dim_val=x, arm=REV[k]))
-    wide("sup_wide.csv", [0.2, 0.5, 0.8], ["pup"] + SH,
-         lambda x, k: 0.0 if k == "pup" else mean(sp, "recon", dim_val=x, arm=REV[k]),
-         lambda x, k: 0.0 if k == "pup" else sd_of(sp, "recon", dim_val=x, arm=REV[k]))
-    wide("scale_wide.csv", [100, 576], ["nodes"] + SH,
-         lambda x, k: 0.0 if k == "nodes" else mean(sc, "recon", n=x, arm=REV[k]),
-         lambda x, k: 0.0 if k == "nodes" else sd_of(sc, "recon", n=x, arm=REV[k]))
-    wide("robust_wide.csv", [0.0, 0.10, 0.20], ["hitp"] + SH,
-         lambda x, k: 0.0 if k == "hitp" else mean(rb, "recon", hit_p=x, arm=REV[k]),
-         lambda x, k: 0.0 if k == "hitp" else sd_of(rb, "recon", hit_p=x, arm=REV[k]))
-    wide("robustlcc_wide.csv", [0.0, 0.10, 0.20], ["hitp"] + SH,
-         lambda x, k: 0.0 if k == "hitp" else mean(rb, "lcc_frac", hit_p=x, arm=REV[k]),
-         lambda x, k: 0.0 if k == "hitp" else sd_of(rb, "lcc_frac", hit_p=x, arm=REV[k]))
-
+    FIELDS = {  # 文件名 -> (数据, 输出列名, json 里作为 x 的字段, 指标, x 取值)
+        "sev_wide.csv": (sv, "disr", "dim_val", "recon", [2, 3, 4]),
+        "sup_wide.csv": (sp, "pup", "dim_val", "recon", [0.2, 0.5, 0.8]),
+        "scale_wide.csv": (sc, "nodes", "n", "recon", [100, 576]),
+        "robust_wide.csv": (rb, "hitp", "hit_p", "recon", [0.0, 0.10, 0.20]),
+        "robustlcc_wide.csv": (rb, "hitp", "hit_p", "lcc_frac", [0.0, 0.10, 0.20]),
+    }
+    for fn, (rows_, col, field, key, xs) in FIELDS.items():
+        with io.open(os.path.join(OUT, fn), "w", encoding="utf-8", newline="\n") as f:
+            f.write(",".join([col] + SH + ["e" + k for k in SH]) + "\n")
+            for x in xs:
+                row = [str(x)]
+                row += ["%.4f" % mean(rows_, key, **{field: x}, arm=REV[k]) for k in SH]
+                row += ["%.4f" % sd_of(rows_, key, **{field: x}, arm=REV[k]) for k in SH]
+                f.write(",".join(row) + "\n")
+        print("  %-18s %3d 行" % (fn, len(xs)))
 
     print("完成 →", OUT)
 

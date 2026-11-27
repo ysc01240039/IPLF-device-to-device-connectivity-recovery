@@ -1,0 +1,106 @@
+% fig6_main.tex —— 图 6（四个场景维度）源文件。
+%   pdflatex fig6_main.tex
+% 数据：../data/{sev,sup,scale,robust}_wide.csv（make_tables.py 生成）
+% 样式与正文图注一致：实线 IPLF / 虚线 五个调参基线 / 点线 双边付费下界；误差棒 ±1 s.d.（数据里 e* 列）。
+\documentclass[border=4pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{pgfplots}
+\usepgfplotslibrary{groupplots}
+\pgfplotsset{compat=1.18}
+\pgfplotstableset{col sep=comma}
+
+\definecolor{cOurs}{RGB}{196,30,58}
+\definecolor{cLower}{RGB}{120,120,120}
+\definecolor{cLeach}{RGB}{31,119,180}
+\definecolor{cCfachs}{RGB}{255,127,14}
+\definecolor{cAfpuck}{RGB}{44,160,44}
+\definecolor{cAerdm}{RGB}{148,103,189}
+\definecolor{cAfpucloc}{RGB}{140,86,75}
+
+\pgfplotsset{
+  panel/.style={
+    width=7.7cm, height=5.3cm,
+    tick label style={font=\footnotesize},
+    label style={font=\footnotesize},
+    title style={font=\footnotesize},
+    ymin=0, ymax=100,
+    ylabel={reconnection rate (\%)},
+    grid=major, grid style={gray!18},
+    ymajorgrids=true, xmajorgrids=false,
+    error bars/y dir=both, error bars/y explicit,
+  },
+  legendstyle/.style={
+    font=\tiny, draw=none, fill=white, fill opacity=0.85, text opacity=1,
+    at={(0.98,0.02)}, anchor=south east, legend columns=2, column sep=0.6ex,
+  },
+}
+
+\newcommand{\armleach}[1]{\addplot[color=cLeach, dashed, mark=o, mark size=1.0pt, line width=0.6pt] table[x=#1, y expr=\thisrow{leach}*100, y error expr=\thisrow{eleach}*100] {../data/\csv};}
+\newcommand{\armcfachs}[1]{\addplot[color=cCfachs, dashed, mark=square*, mark size=1.0pt, line width=0.6pt] table[x=#1, y expr=\thisrow{cfachs}*100, y error expr=\thisrow{ecfachs}*100] {../data/\csv};}
+\newcommand{\armafpuck}[1]{\addplot[color=cAfpuck, dashed, mark=triangle*, mark size=1.2pt, line width=0.6pt] table[x=#1, y expr=\thisrow{afpuck}*100, y error expr=\thisrow{eafpuck}*100] {../data/\csv};}
+\newcommand{\armaerdm}[1]{\addplot[color=cAerdm, dashed, mark=diamond*, mark size=1.1pt, line width=0.6pt] table[x=#1, y expr=\thisrow{aerdm}*100, y error expr=\thisrow{eaerdm}*100] {../data/\csv};}
+\newcommand{\armafpucloc}[1]{\addplot[color=cAfpucloc, dashed, mark=pentagon*, mark size=1.1pt, line width=0.6pt] table[x=#1, y expr=\thisrow{afpucloc}*100, y error expr=\thisrow{eafpucloc}*100] {../data/\csv};}
+\newcommand{\armlower}[1]{\addplot[color=cLower, dotted, mark=x, mark size=1.2pt, line width=0.7pt] table[x=#1, y expr=\thisrow{lower}*100, y error expr=\thisrow{elower}*100] {../data/\csv};}
+\newcommand{\armours}[1]{\addplot[color=cOurs, solid, mark=*, mark size=1.2pt, line width=1.0pt] table[x=#1, y expr=\thisrow{ours}*100, y error expr=\thisrow{eours}*100] {../data/\csv};}
+
+\begin{document}
+\def\csv{sev_wide.csv}
+\begin{tikzpicture}
+\begin{groupplot}[
+  group style={group size=2 by 2, horizontal sep=1.45cm, vertical sep=1.55cm},
+  panel,
+]
+% ---- (a) 灾强：图例放在这里（其余面板共用）----
+\nextgroupplot[title={(a) Disaster severity}, xlabel={disaster radius (cells)},
+  xtick={2,3,4}, xmin=1.85, xmax=4.15]
+  \armours{disr}   \armleach{disr}  \armcfachs{disr}    \armafpuck{disr}    \armaerdm{disr}  \armafpucloc{disr}  \armlower{disr}
+% ---- (b) 供给 ----
+\nextgroupplot[title={(b) Sky-visible fraction}, xlabel={$\rho$},
+  xtick={0.2,0.5,0.8}, xmin=0.15, xmax=0.85]
+  \def\csv{sup_wide.csv}
+  \armours{pup}
+  \armleach{pup}
+  \armcfachs{pup}
+  \armafpuck{pup}
+  \armaerdm{pup}
+  \armafpucloc{pup}
+  \armlower{pup}
+
+% ---- (c) 规模 ----
+\nextgroupplot[title={(c) Scale}, xlabel={number of terminals},
+  xtick={100,576}, xmin=60, xmax=620]
+  \def\csv{scale_wide.csv}
+  \armours{nodes}
+  \armleach{nodes}
+  \armcfachs{nodes}
+  \armafpuck{nodes}
+  \armaerdm{nodes}
+  \armafpucloc{nodes}
+  \armlower{nodes}
+
+% ---- (d) 二次打击 ----
+\nextgroupplot[title={(d) Repeated shock on uplink terminals},
+  xlabel={fraction destroyed}, xtick={0,0.1,0.2}, xmin=-0.04, xmax=0.24]
+  \def\csv{robust_wide.csv}
+  \armours{hitp}
+  \armleach{hitp}
+  \armcfachs{hitp}
+  \armafpuck{hitp}
+  \armaerdm{hitp}
+  \armafpucloc{hitp}
+  \armlower{hitp}
+\end{groupplot}
+
+\node[anchor=north, yshift=-6pt, font=\scriptsize] at (current bounding box.south) {%
+\setlength{\tabcolsep}{4pt}%
+\begin{tabular}{@{}c@{}l@{\hspace{10pt}}c@{}l@{\hspace{10pt}}c@{}l@{\hspace{10pt}}c@{}l@{\hspace{10pt}}c@{}l@{\hspace{10pt}}c@{}l@{\hspace{10pt}}c@{}l@{}}
+\tikz\draw[cOurs, line width=1pt, mark=*, mark size=1.2pt] plot coordinates {(0,0) (0.42,0)}; & IPLF &
+\tikz\draw[cLeach, dashed, line width=0.6pt, mark=o, mark size=1.0pt] plot coordinates {(0,0) (0.42,0)}; & LEACH &
+\tikz\draw[cCfachs, dashed, line width=0.6pt, mark=square*, mark size=1.0pt] plot coordinates {(0,0) (0.42,0)}; & CFACHS &
+\tikz\draw[cAfpuck, dashed, line width=0.6pt, mark=triangle*, mark size=1.2pt] plot coordinates {(0,0) (0.42,0)}; & AFPUC-$k$ &
+\tikz\draw[cAerdm, dashed, line width=0.6pt, mark=diamond*, mark size=1.1pt] plot coordinates {(0,0) (0.42,0)}; & ST &
+\tikz\draw[cAfpucloc, dashed, line width=0.6pt, mark=pentagon*, mark size=1.1pt] plot coordinates {(0,0) (0.42,0)}; & AFPUC-loc &
+\tikz\draw[cLower, dotted, line width=0.7pt, mark=x, mark size=1.2pt] plot coordinates {(0,0) (0.42,0)}; & Lower bd.
+\end{tabular}};
+\end{tikzpicture}
+\end{document}
